@@ -1,5 +1,5 @@
 import os
-import sys
+import tempfile
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
@@ -7,88 +7,87 @@ from groq import Groq
 import streamlit as st
 import gdown
 
+# --- Configuración de la página ---
+st.set_page_config(page_title="Detección de Enfermedades", page_icon="🌿")
+
 # --- Configuración global --- 
 IMG_HEIGHT = 180
 IMG_WIDTH = 180
-class_names = ['amarillento', 'phoma', 'quemaduras', 'rut', 'sanas'] # Coincide con tu entrenamiento
+class_names = ['amarillento', 'phoma', 'quemaduras', 'rut', 'sanas']
 MODEL_PATH = 'image_classifier_model.keras'
-
-# ID de tu archivo subido a Google Drive
 GDRIVE_FILE_ID = '1aRrqWp4H_a6qRmWDLt65DKHysPhKUS00'
 
-# --- Función optimizada para descargar y cargar el modelo ---
+# --- Cargar el modelo en memoria ---
 @st.cache_resource
 def cargar_modelo():
     if not os.path.exists(MODEL_PATH):
-        with st.spinner("Descargando el modelo desde Google Drive... Esto solo se hace una vez."):
+        with st.spinner("Descargando modelo desde Google Drive... Esto solo ocurre una vez."):
+            temp_file = "temp_model.keras"
             url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
-            gdown.download(url, MODEL_PATH, quiet=False)
-    
-    model = tf.keras.models.load_model(MODEL_PATH)
-    return model
+            gdown.download(url, temp_file, quiet=False)
+            os.rename(temp_file, MODEL_PATH)
+    return tf.keras.models.load_model(MODEL_PATH)
 
 try:
     model = cargar_modelo()
 except Exception as e:
-    st.error(f"❌ Error al cargar/descargar el modelo: {e}")
+    st.error(f"❌ Error al cargar el modelo: {e}")
     st.stop()
 
-# --- Función para predecir y analizar con IA ---
-def analizar_imagen_con_ia(image_path):
-    # 1. Configurar Cliente Groq (Lee desde st.secrets de Streamlit o variables de entorno)
-    try:
-        api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
-        if not api_key:
-            raise ValueError("La clave 'GROQ_API_KEY' no está configurada.")
-        client_ai = Groq(api_key=api_key)
-    except Exception as e:
-        return f"❌ Error al configurar la API de Groq: {e}\nAsegúrate de configurar 'GROQ_API_KEY' en los Secrets de Streamlit Cloud."
+# --- Interfaz de usuario en Streamlit ---
+st.title("🌿 Detección de Enfermedades en Hojas")
+st.write("Suba una imagen para clasificar el estado de la hoja y obtener un diagnóstico con IA.")
 
-    # 2. Procesar imagen y predecir con el modelo
-    if not os.path.exists(image_path):
-        return f"Error: La imagen '{image_path}' no se encontró."
+# Componente para subir archivo desde el navegador
+uploaded_file = st.file_uploader("Selecciona una imagen de hoja...", type=["jpg", "jpeg", "png"])
 
-    try:
-        img = image.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
-        img_array = image.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0) # Crear lote (batch)
+if uploaded_file is not None:
+    # Guardar archivo temporal para procesarlo con TensorFlow
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        tmp_path = tmp_file.name
 
-        predictions = model.predict(img_array)
-        score = tf.nn.softmax(predictions[0])
-        predicted_class = class_names[np.argmax(score)]
-        confidence = 100 * np.max(score)
-    except Exception as e:
-        return f"Error al procesar la imagen o realizar la predicción: {e}"
+    # Mostrar la imagen cargada
+    st.image(uploaded_file, caption="Imagen seleccionada", use_container_width=True)
 
-    # 3. Consultar a Groq (IA) sobre la enfermedad detectada
-    try:
-        prompt = f"""Actúa como un experto fitopatólogo.
-        El modelo de visión ha detectado la clase '{predicted_class}' con un {confidence:.2f}% de confianza.
-        Si la clase es 'sanas', felicita al agricultor.
-        Si es una enfermedad, explica qué es, sus síntomas y da 3 consejos breves de tratamiento. Sé conciso y claro."""
+    if st.button("🔍 Analizar Enfermedad"):
+        with st.spinner("Clasificando imagen y consultando al experto IA..."):
+            try:
+                # 1. Predicción con el modelo
+                img = image.load_img(tmp_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
+                img_array = image.img_to_array(img)
+                img_array = tf.expand_dims(img_array, 0)
 
-        chat_completion = client_ai.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.5
-        )
-        respuesta_ia = chat_completion.choices[0].message.content
-    except Exception as e:
-        respuesta_ia = f"Error al obtener respuesta de Groq: {e}"
+                predictions = model.predict(img_array)
+                score = tf.nn.softmax(predictions[0])
+                predicted_class = class_names[np.argmax(score)]
+                confidence = 100 * np.max(score)
 
-    # 4. Construir el resultado
-    result = f"Detección para la imagen '{image_path}':\n"
-    result += f"Clase predicha: {predicted_class} con {confidence:.1f}% de confianza.\n\n"
-    result += f"--- 🌿 ANÁLISIS DEL EXPERTO IA ---\n"
-    result += respuesta_ia
+                st.success(f"**Resultado:** {predicted_class.upper()} ({confidence:.1f}% de confianza)")
 
-    return result
+                # 2. Diagnóstico con Groq
+                api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
+                if not api_key:
+                    st.error("❌ La clave GROQ_API_KEY no está configurada en los Secrets de Streamlit.")
+                else:
+                    client_ai = Groq(api_key=api_key)
+                    prompt = f"""Actúa como un experto fitopatólogo.
+                    El modelo de visión ha detectado la clase '{predicted_class}' con un {confidence:.2f}% de confianza.
+                    Si la clase es 'sanas', felicita al agricultor.
+                    Si es una enfermedad, explica qué es, sus síntomas y da 3 consejos breves de tratamiento. Sé conciso y claro."""
 
-# --- Ejecución principal del script ---
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Uso: python app.py <ruta_a_la_imagen>")
-        sys.exit(1)
+                    chat_completion = client_ai.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.5
+                    )
+                    respuesta_ia = chat_completion.choices[0].message.content
 
-    input_image_path = sys.argv[1]
-    print(analizar_imagen_con_ia(input_image_path))
+                    st.markdown("### 🌿 Análisis del Experto IA")
+                    st.info(respuesta_ia)
+
+            except Exception as e:
+                st.error(f"Error al procesar la imagen: {e}")
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
