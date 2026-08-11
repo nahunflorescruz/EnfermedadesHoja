@@ -1,6 +1,0 @@
-streamlit
-tensorflow-cpu
-groq
-pillow
-numpy
-matplotlib
