@@ -4,3 +4,4 @@ groq
 pillow
 numpy
 matplotlib
+python-dotenv
