@@ -4,36 +4,45 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 from groq import Groq
-from dotenv import load_dotenv # Para cargar variables de entorno desde un archivo .env
+import streamlit as st
+import gdown
 
 # --- Configuración global --- 
 IMG_HEIGHT = 180
 IMG_WIDTH = 180
-class_names = ['amarillento', 'phoma', 'quemaduras', 'rut', 'sanas'] # ¡Importante! Coincide con tu entrenamiento
+class_names = ['amarillento', 'phoma', 'quemaduras', 'rut', 'sanas'] # Coincide con tu entrenamiento
 MODEL_PATH = 'image_classifier_model.keras'
 
-# Cargar variables de entorno (para GROQ_API_KEY fuera de Colab)
-load_dotenv()
+# ID de tu archivo subido a Google Drive
+GDRIVE_FILE_ID = '1aRrqWp4H_a6qRmWDLt65DKHysPhKUS00'
 
-# --- Cargar el modelo entrenado ---
-try:
+# --- Función optimizada para descargar y cargar el modelo ---
+@st.cache_resource
+def cargar_modelo():
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("Descargando el modelo desde Google Drive... Esto solo se hace una vez."):
+            url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+            gdown.download(url, MODEL_PATH, quiet=False)
+    
     model = tf.keras.models.load_model(MODEL_PATH)
-    print(f"Modelo cargado exitosamente desde: {MODEL_PATH}")
+    return model
+
+try:
+    model = cargar_modelo()
 except Exception as e:
-    print(f"Error al cargar el modelo: {e}")
-    print("Asegúrate de que el archivo 'image_classifier_model.keras' esté en el mismo directorio.")
-    sys.exit(1)
+    st.error(f"❌ Error al cargar/descargar el modelo: {e}")
+    st.stop()
 
 # --- Función para predecir y analizar con IA ---
 def analizar_imagen_con_ia(image_path):
-    # 1. Configurar Cliente Groq
+    # 1. Configurar Cliente Groq (Lee desde st.secrets de Streamlit o variables de entorno)
     try:
-        api_key = os.getenv('GROQ_API_KEY')
+        api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
         if not api_key:
-            raise ValueError("La variable de entorno 'GROQ_API_KEY' no está configurada.")
+            raise ValueError("La clave 'GROQ_API_KEY' no está configurada.")
         client_ai = Groq(api_key=api_key)
     except Exception as e:
-        return f"❌ Error al configurar la API de Groq: {e}\nAsegúrate de que 'GROQ_API_KEY' esté en tus variables de entorno o en un archivo .env."
+        return f"❌ Error al configurar la API de Groq: {e}\nAsegúrate de configurar 'GROQ_API_KEY' en los Secrets de Streamlit Cloud."
 
     # 2. Procesar imagen y predecir con el modelo
     if not os.path.exists(image_path):
@@ -42,7 +51,7 @@ def analizar_imagen_con_ia(image_path):
     try:
         img = image.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
         img_array = image.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0) # Crear un lote (batch)
+        img_array = tf.expand_dims(img_array, 0) # Crear lote (batch)
 
         predictions = model.predict(img_array)
         score = tf.nn.softmax(predictions[0])
@@ -59,7 +68,7 @@ def analizar_imagen_con_ia(image_path):
         Si es una enfermedad, explica qué es, sus síntomas y da 3 consejos breves de tratamiento. Sé conciso y claro."""
 
         chat_completion = client_ai.chat.completions.create(
-            model="llama-3.1-8b-instant", # O el modelo de Groq que prefieras
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5
         )
@@ -76,7 +85,7 @@ def analizar_imagen_con_ia(image_path):
     return result
 
 # --- Ejecución principal del script ---
-if _name_ == "_main_":
+if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Uso: python app.py <ruta_a_la_imagen>")
         sys.exit(1)
