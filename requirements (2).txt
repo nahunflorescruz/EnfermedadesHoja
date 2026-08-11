@@ -1,0 +1,6 @@
+tensorflow==2.16.1
+numpy==1.25.2
+Pillow==10.3.0
+groq==0.8.0
+matplotlib==3.7.1 # Necesario si quieres las visualizaciones en el app.py, si no, puedes quitarlo
+python-dotenv==1.0.1 # Para cargar la API Key de un archivo .env si no usas Colab
